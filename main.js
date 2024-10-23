@@ -166,14 +166,12 @@ function initGL() {
     // Initialize and buffer U vertices (yellow color)
     if (vertices[0].length != 0) {
         surfaceU = new Model('SurfaceU');
-        gl.uniform4fv(shProgram.iColor, [1, 1, 0, 1]);  // Set yellow color for U vertices
         surfaceU.BufferData(vertices[0]);
     }
 
     // Initialize and buffer V vertices (green color)
     if (vertices[1].length != 0) {
         surfaceV = new Model('SurfaceV');
-        gl.uniform4fv(shProgram.iColor, [0, 1, 0, 1]);  // Set green color for V vertices
         surfaceV.BufferData(vertices[1]);
     }
 
