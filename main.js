@@ -1,192 +1,135 @@
 'use strict';
-//import CreateHTSurfaceData from "./humming-top";
 
 let gl;                         // The webgl context.
-let surfaceU, surfaceV;  // Separate surfaces for U and V
-
+let surface;                    // A surface model
 let shProgram;                  // A shader program
 let spaceball;                  // A SimpleRotator object that lets the user rotate the view by mouse.
+let testing = true;
 
-function deg2rad(angle) {
-    return angle * Math.PI / 180;
-}
-
-
-// Constructor
-function Model(name) {
-    this.name = name;
-    this.iVertexBuffer = gl.createBuffer();
-    this.count = 0;
-
-    this.BufferData = function(vertices) {
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.iVertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STREAM_DRAW);
-
-        this.count = vertices.length / 3;
+function init() {
+    let canvas;
+    try {
+        canvas = document.getElementById("webglcanvas");
+        gl = canvas.getContext("webgl");
+        if ( ! gl ) {
+            throw "Browser does not support WebGL";
+        }
+    }
+    catch (e) {
+        document.getElementById("canvas-holder").innerHTML =
+            "<p>Sorry, could not get a WebGL graphics context.</p>";
+		console.log(e.message);
+        return;
+    }
+    try {
+		spaceball = new TrackballRotator(canvas, draw, 0);
+        initGL();  // initialize the WebGL graphics context
+    }
+    catch (e) {
+        document.getElementById("canvas-holder").innerHTML =
+            "<p>Sorry, could not initialize the WebGL graphics context: " + e + "</p>";
+        return;
     }
 
-    this.Draw = function() {
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.iVertexBuffer);
-        gl.vertexAttribPointer(shProgram.iAttribVertex, 3, gl.FLOAT, false, 0, 0);
-        gl.enableVertexAttribArray(shProgram.iAttribVertex);
-
-        gl.drawArrays(gl.LINE_STRIP, 0, this.count);
-    }
+    draw();
 }
 
-// Constructor
-function ShaderProgram(name, program) {
-
-    this.name = name;
-    this.prog = program;
-
-    // Location of the attribute variable in the shader program.
-    this.iAttribVertex = -1;
-    // Location of the uniform specifying a color for the primitive.
-    this.iColor = -1;
-    // Location of the uniform matrix representing the combined transformation.
-    this.iModelViewProjectionMatrix = -1;
-
-    this.Use = function() {
-        gl.useProgram(this.prog);
-    }
-}
-
-
-/* Draws a colored cube, along with a set of coordinate axes.
- * (Note that the use of the above drawPrimitive function is not an efficient
- * way to draw with WebGL.  Here, the geometry is so simple that it doesn't matter.)
- */
-function draw() {
-    gl.clearColor(0, 0, 0, 1);
+function draw() { 
+    gl.clearColor(0,0,0,1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    /* Set the values of the projection transformation */
-    let projection = m4.perspective(Math.PI / 8, 1, 8, 12);
-
-    /* Get the view matrix from the SimpleRotator object. */
+    
+    // VIEW
+    let projection = m4.perspective(Math.PI/8, 1, 8, 12);  
     let modelView = spaceball.getViewMatrix();
+    let rotateToPointZero = m4.axisRotation([0.707,0.707,0], 0.7);
+    let translateToPointZero = m4.translation(0,0,-10);
 
-    let rotateToPointZero = m4.axisRotation([0.707, 0.707, 0], 0.7);
-    let translateToPointZero = m4.translation(0, 0, -10);
-
-    let matAccum0 = m4.multiply(rotateToPointZero, modelView);
-    let matAccum1 = m4.multiply(translateToPointZero, matAccum0);
-
-    /* Multiply the projection matrix times the modelview matrix to give the
-       combined transformation matrix, and send that to the shader program. */
-    let modelViewProjection = m4.multiply(projection, matAccum1);
-    gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, modelViewProjection);
-
-    // Draw V vertices with green color
-    if (surfaceV) {
-        gl.uniform4fv(shProgram.iColor, [0, 1, 0, 1]);  // Green for V
-        surfaceV.Draw();
-    }
-
-    // Draw U vertices with yellow color
-    if (surfaceU) {
-        gl.uniform4fv(shProgram.iColor, [1, 1, 0, 1]);  // Yellow for U
-        surfaceU.Draw();
-    }
-
-
-}
-
-function CreateSurfaceData()
-{
-    let vertexList = [];
-
-    for (let i=0; i<360; i+=5) {
-        vertexList.push( Math.sin(deg2rad(i)), 1, Math.cos(deg2rad(i)) );
-        vertexList.push( Math.sin(deg2rad(i)), 0, Math.cos(deg2rad(i)) );
-    }
+    let matAccum0 = m4.multiply(rotateToPointZero, modelView );
+    let matAccum1 = m4.multiply(translateToPointZero, matAccum0 );
 	
-    return vertexList;
+	let modelViewProjection = m4.multiply(projection, matAccum1 );
+	gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, modelViewProjection);
+	gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matAccum1 );
+
+	// NORMALS
+	let normalMatrix = m4.identity();
+	m4.multiply(modelView, matAccum1, normalMatrix);
+	m4.inverse(normalMatrix, normalMatrix);    
+	m4.transpose(normalMatrix, normalMatrix);
+	gl.uniformMatrix4fv(shProgram.iNormalMatrix, false, normalMatrix);
+
+
+    //COLOR AND TEXTURE
+    gl.uniform4fv(shProgram.iColor, [1,0,0.5,1] );
+
+    gl.uniform1i(shProgram.iTMU0, 0);
+    gl.uniform1i(shProgram.iTMU1, 1);
+    gl.uniform1i(shProgram.iTMU1, 2);
+
+    surface.Draw();
 }
-
-function CreateHTSurfaceData(drawU, drawV)
-{
-    let vertexListU = [];
-    let vertexListV = [];
-    
-    let p = 2;
-    let h = 5;
-	let heightStep = 0.5;
-    let scale = 1/5;
-	let detail = Math.PI / 20;
-	
-    if (drawU) {
-        // ----- U
-        for (let z = -h; z <= h; z += heightStep) {
-            for (let i = 0; i <= 2 * Math.PI; i += detail) {
-                let radius = (Math.pow(Math.abs(z) - h, 2)) / (2 * p); 
-                vertexListU.push(
-                    radius * Math.cos(i) * scale, 
-                    z * scale,                    
-                    radius * Math.sin(i) * scale  
-                );
-            }
-        }
-    }
-
-    if (drawV) {
-        // ----- V
-        for (let i = 0; i < 2 * Math.PI; i += detail) {
-            for (let z = -h; z <= h; z += heightStep) {
-                let radius = (Math.pow(Math.abs(z) - h, 2)) / (2 * p); 
-                vertexListV.push(
-                    radius * Math.cos(i) * scale, 
-                    z * scale,                    
-                    radius * Math.sin(i) * scale  
-                );
-            }
-        }
-    }
-	
-    
-    return [vertexListU, vertexListV];
-}
-
 
 function initGL() {
-    let prog = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+    let prog = createProgram( gl, vertexShaderSource, fragmentShaderSource );
+
     shProgram = new ShaderProgram('Basic', prog);
     shProgram.Use();
+	
+	//BASE
+    shProgram.iAttribVertex              	= gl.getAttribLocation(prog, "vertex");
+    shProgram.iModelViewProjectionMatrix 	= gl.getUniformLocation(prog, "ModelViewProjectionMatrix");
+    shProgram.iColor                     	= gl.getUniformLocation(prog, "color");
+	
+	//TEXTURE
+	shProgram.iAttribTexCoords 				= gl.getAttribLocation(prog, "tex");
+	shProgram.iTMU0                      	= gl.getUniformLocation(prog, "iTMU0");
+    shProgram.iTMU1                      	= gl.getUniformLocation(prog, "iTMU1");
+    shProgram.iTMU2                      	= gl.getUniformLocation(prog, "iTMU2");
 
-    shProgram.iAttribVertex = gl.getAttribLocation(prog, "vertex");
-    shProgram.iModelViewProjectionMatrix = gl.getUniformLocation(prog, "ModelViewProjectionMatrix");
-    shProgram.iColor = gl.getUniformLocation(prog, "color");
+	//LIGHT AND NORMALS
+	shProgram.iAttribNormal 			 	= gl.getAttribLocation(prog, "normal");
+	shProgram.iAttribTangent 			 	= gl.getAttribLocation(prog, "tangent");
+	shProgram.iUniformLightPosition 	 	= gl.getUniformLocation(prog, "lightPosition");
+	shProgram.iUniformAmbientLight 			= gl.getUniformLocation(prog, "ambientLight");
+	
+	//LIGHT
+	gl.uniform3fv(shProgram.iUniformLightPosition, [5.0, 5.0, 5.0]);
+	gl.uniform3fv(shProgram.iUniformAmbientLight, [0.2, 0.2, 0.2]);
+	gl.uniform3fv(shProgram.iUniformViewPosition, [0.0, 0.0, 10.0]);
+	
+	shProgram.iUniformViewPosition = gl.getUniformLocation(prog, "viewPosition");
+	shProgram.iNormalMatrix = gl.getUniformLocation(prog, "NormalMatrix");
+	shProgram.iModelViewMatrix = gl.getUniformLocation(prog, "ModelViewMatrix");
+	
+	shProgram.iTexTransform = gl.getUniformLocation(prog, "u_texTransform");
+	shProgram.iPivot = gl.getUniformLocation(prog, "u_pivot");
+	shProgram.iPivotRadius = gl.getUniformLocation(prog, "u_pivotRadius");
 
-    // Get U and V vertices separately
-    let vertices = CreateHTSurfaceData(true, true);
+	updateTextureTransform();
 
-    // Initialize and buffer U vertices (yellow color)
-    if (vertices[0].length != 0) {
-        surfaceU = new Model('SurfaceU');
-        surfaceU.BufferData(vertices[0]);
-    }
 
-    // Initialize and buffer V vertices (green color)
-    if (vertices[1].length != 0) {
-        surfaceV = new Model('SurfaceV');
-        surfaceV.BufferData(vertices[1]);
-    }
+    let data = {};
+    
+    CreateSurfaceData(data);
+
+    surface = new Model('Surface');
+    surface.BufferData(data.verticesF32, data.normalsF32, data.indicesU16, data.texcoordsF32, data.tangentsF32);
+
+    // surface.idTextureDiffuse  = LoadTexture("https://i.imgflip.com/84w3tc.jpg?a481440");
+    // surface.idTextureSpecular = LoadTexture("https://i.imgflip.com/84w3tc.jpg?a481440");
+    //surface.idTextureDiffuse  = LoadTexture("https://media.tenor.com/z4WPS1HjaU0AAAAe/fgsfds-osaka.png");
+    // surface.idTextureSpecular = LoadTexture("https://media.tenor.com/z4WPS1HjaU0AAAAe/fgsfds-osaka.png");
+    //surface.idTextureDiffuse  = LoadTexture("https://github.com/skajeniy/VGGI/blob/PA3/osaka_diffuse.png");
+    //surface.idTextureSpecular  = LoadTexture("https://github.com/skajeniy/VGGI/blob/PA3/osaka_normal.png");
+	
+	// to run properly use Win+R chrome --disable-web-security --user-data-dir="C:/ChromeDev"
+	surface.idTextureDiffuse  = LoadTexture("osaka_diffuse.png");
+    surface.idTextureSpecular  = LoadTexture("osaka_specular.png");
+    surface.idTextureNormal  = LoadTexture("osaka_normal.png");
 
     gl.enable(gl.DEPTH_TEST);
 }
 
-
-/* Creates a program for use in the WebGL context gl, and returns the
- * identifier for that program.  If an error occurs while compiling or
- * linking the program, an exception of type Error is thrown.  The error
- * string contains the compilation or linking error.  If no error occurs,
- * the program identifier is the return value of the function.
- * The second and third parameters are strings that contain the
- * source code for the vertex shader and for the fragment shader.
- */
 function createProgram(gl, vShader, fShader) {
     let vsh = gl.createShader( gl.VERTEX_SHADER );
     gl.shaderSource(vsh,vShader);
@@ -210,38 +153,81 @@ function createProgram(gl, vShader, fShader) {
     return prog;
 }
 
+function ShaderProgram(name, program) {
 
-/**
- * initialization function that will be called when the page has loaded
- */
-function init() {
-    let canvas;
-    try {
-        canvas = document.getElementById("webglcanvas");
-        gl = canvas.getContext("webgl");
-        if ( ! gl ) {
-            throw "Browser does not support WebGL";
-        }
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not get a WebGL graphics context.</p>";
-        return;
-    }
-    try {
-        initGL();  // initialize the WebGL graphics context
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not initialize the WebGL graphics context: " + e + "</p>";
-        return;
-    }
+    this.name = name;
+    this.prog = program;
 
-    spaceball = new TrackballRotator(canvas, draw, 0);
 
-    draw();
+    this.iAttribVertex = -1;
+	this.iAttribTexCoords = -1;
+    this.iColor = -1;
+    this.iModelViewProjectionMatrix = -1;
+	
+	this.iModelViewMatrix = -1;
+    this.iTMU0 = gl.getUniformLocation(program, "iTMU0");
+	this.iTMU1 = gl.getUniformLocation(program, "iTMU1");
+	this.iTMU2 = gl.getUniformLocation(program, "iTMU2");
+
+    this.Use = function() {
+        gl.useProgram(this.prog);
+    }
 }
 
-window.onload = () => { 
-    init(); 
-};
+let textureScale = [1, 1];
+let textureRotation = 0;
+
+let pivotPoint = [0.5, 0.5];
+
+function updateTextureTransform() {
+	const pivotRadius = 0.005;
+    const cosR = Math.cos(textureRotation);
+    const sinR = Math.sin(textureRotation);
+    const [sx, sy] = textureScale;
+
+    const optimus_prime = [
+        cosR * sx, -sinR * sy, 0,
+        sinR * sx,  cosR * sy, 0,
+        0,          0,         1,
+    ];
+
+    gl.uniformMatrix3fv(shProgram.iTexTransform, false, optimus_prime);
+	gl.uniform2fv(shProgram.iPivot, pivotPoint);
+	gl.uniform1f(shProgram.iPivotRadius, pivotRadius);
+}
+
+
+document.addEventListener('keydown', (event) => {
+    const step = 0.05;
+    switch (event.key) {
+        case 'a':
+            pivotPoint[0] -= step;
+            break;
+        case 'd':
+            pivotPoint[0] += step;
+            break;
+        case 's':
+            pivotPoint[1] += step;
+            break;
+        case 'w':
+            pivotPoint[1] -= step;
+            break;
+        case 'ArrowDown':
+            textureScale[0] += 0.1;
+            textureScale[1] += 0.1;
+            break;
+        case 'ArrowUp':
+            textureScale[0] -= 0.1;
+            textureScale[1] -= 0.1;
+            break;
+        case 'ArrowLeft':
+            textureRotation -= Math.PI / 360;
+            break;
+        case 'ArrowRight':
+            textureRotation += Math.PI / 360;
+            break;
+    }
+    updateTextureTransform();
+    draw();
+});
+
